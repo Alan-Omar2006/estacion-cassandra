@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Registrar · Estación UTHH</title>
+  <link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main style="max-width: 700px">
+  <h1>Registrar una lectura</h1>
+  <p class="nota">
+    Envía una lectura simulada. Si supera el umbral del sensor,
+    también se guardará una alerta.
+  </p>
+
+  <form class="tarjeta" id="form">
+    <label>
+      Sensor
+      <select id="sensor" required></select>
+    </label>
+
+    <div class="campos">
+      <label>
+        Temperatura (°C)
+        <input
+          id="temperatura"
+          type="number"
+          min="-20"
+          max="60"
+          step="0.1"
+          value="36"
+          inputmode="decimal"
+          required
+        >
+      </label>
+
+      <label>
+        Humedad (%)
+        <input
+          id="humedad"
+          type="number"
+          min="0"
+          max="100"
+          step="1"
+          value="70"
+          inputmode="numeric"
+          required
+        >
+      </label>
+    </div>
+
+    <button id="guardar" type="submit" disabled>
+      Guardar lectura
+    </button>
+  </form>
+
+  <div id="aviso" role="status" aria-live="polite"></div>
+
+  <section class="tarjeta" id="resultado" hidden>
+    <h2>Así se guardó en Cassandra</h2>
+    <p class="nota">
+      La lectura se escribió en el historial y en última lectura.
+      Si superó el umbral, también se registró una alerta.
+      El contador se actualizó por separado.
+    </p>
+    <pre id="cql"></pre>
+  </section>
+</main>
+
+<script src="app.js"></script>
+<script>
+menu("registrar.html");
+
+const selector = document.getElementById("sensor");
+const boton = document.getElementById("guardar");
+const mensajes = document.getElementById("aviso");
+const resultado = document.getElementById("resultado");
+
+async function iniciar() {
+  try {
+    const respuesta = await api("/sensores");
+
+    for (const sensor of respuesta.sensores) {
+      const opcion = el(
+        "option",
+        null,
+        sensor.nombre + " · Umbral " + sensor.temp_max + " °C"
+      );
+      opcion.value = sensor.id;
+      selector.append(opcion);
+    }
+
+    if (!respuesta.sensores.length) {
+      throw new Error("No hay sensores registrados.");
+    }
+
+    boton.disabled = false;
+  } catch (error) {
+    aviso(mensajes, error.message, "error");
+  }
+}
+
+document.getElementById("form").addEventListener(
+  "submit",
+  async evento => {
+    evento.preventDefault();
+    boton.disabled = true;
+    resultado.hidden = true;
+    aviso(mensajes, "Guardando...");
+
+    try {
+      const temperatura = Number(
+        document.getElementById("temperatura").value
+      );
+      const humedad = Number(
+        document.getElementById("humedad").value
+      );
+
+      const respuesta = await api("/lecturas", "POST", {
+        sensor: selector.value,
+        temperatura,
+        humedad,
+      });
+
+      aviso(
+        mensajes,
+        "Lectura guardada: " + temperatura + " °C y " +
+        humedad + " % de humedad. Sensor: " +
+        respuesta.sensor + ". Día: " + respuesta.dia + ". " +
+        (respuesta.alerta
+          ? "Supera el umbral: también se registró una ALERTA."
+          : "No supera el umbral de alerta.")
+      );
+
+      document.getElementById("cql").textContent =
+        respuesta.cql.join("\n");
+      resultado.hidden = false;
+    } catch (error) {
+      aviso(mensajes, error.message, "error");
+    } finally {
+      boton.disabled = false;
+    }
+  }
+);
+
+iniciar();
+</script>
+</body>
+</html>

@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sensor · Estación UTHH</title>
+  <link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main>
+  <h1>Lecturas de un sensor</h1>
+  <p class="nota">
+    Consulta una partición: las lecturas de un sensor en un día.
+  </p>
+
+  <form class="tarjeta campos" id="filtro">
+    <label>
+      Sensor
+      <select id="sensor"></select>
+    </label>
+
+    <label>
+      Día
+      <input id="dia" type="date" required>
+    </label>
+
+    <label>
+      Máximo de lecturas
+      <select id="limite">
+        <option>100</option>
+        <option selected>1000</option>
+        <option>5000</option>
+      </select>
+    </label>
+  </form>
+
+  <div id="aviso"></div>
+
+  <section class="tarjeta">
+    <h2 id="resumen">Temperatura y humedad</h2>
+    <p class="nota">
+      Temperatura: naranja, eje izquierdo en °C.
+      Humedad: azul, eje derecho en %.
+    </p>
+    <div id="grafica"></div>
+  </section>
+
+  <section class="tarjeta">
+    <h2>Últimas 10 lecturas de la consulta</h2>
+    <div class="tabla">
+      <table>
+        <thead>
+          <tr>
+            <th>Hora</th>
+            <th>Temperatura</th>
+            <th>Humedad</th>
+          </tr>
+        </thead>
+        <tbody id="tabla"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="tarjeta">
+    <h2>Consultas a Cassandra</h2>
+    <div id="cql"></div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+<script>
+menu("sensor.html");
+
+const parametros = new URLSearchParams(location.search);
+const selector = document.getElementById("sensor");
+const dia = document.getElementById("dia");
+const limite = document.getElementById("limite");
+
+dia.value = hoyLocal();
+
+let cargando = false;
+let pendiente = false;
+
+async function cargar() {
+  if (!selector.value || !dia.value) return;
+
+  if (cargando) {
+    pendiente = true;
+    return;
+  }
+
+  cargando = true;
+
+  try {
+    const consulta = new URLSearchParams({
+      dia: dia.value,
+      limite: limite.value,
+    });
+
+    const resultado = await api(
+      "/sensores/" + encodeURIComponent(selector.value) +
+      "/lecturas?" + consulta
+    );
+
+    grafica(
+      document.getElementById("grafica"),
+      resultado.lecturas
+    );
+
+    const temperaturas = resultado.lecturas.map(
+      lectura => lectura.temperatura
+    );
+
+    document.getElementById("resumen").textContent =
+      resultado.lecturas.length + " lecturas" +
+      (temperaturas.length
+        ? " · Mínima: " + num(Math.min(...temperaturas)) +
+          " °C · Máxima: " + num(Math.max(...temperaturas)) + " °C"
+        : "");
+
+    const tabla = document.getElementById("tabla");
+    tabla.textContent = "";
+
+    for (const lectura of resultado.lecturas.slice(0, 10)) {
+      const fila = el("tr");
+      fila.append(
+        el("td", null, horaLocal(lectura.hora)),
+        el("td", null, num(lectura.temperatura) + " °C"),
+        el("td", null, lectura.humedad + " %")
+      );
+      tabla.append(fila);
+    }
+
+    if (!resultado.lecturas.length) {
+      const fila = el("tr");
+      const celda = el("td", "nota", "Sin lecturas para esta fecha.");
+      celda.colSpan = 3;
+      fila.append(celda);
+      tabla.append(fila);
+    }
+
+    verCql(
+      document.getElementById("cql"),
+      resultado.cql
+    );
+
+    aviso(document.getElementById("aviso"), "");
+  } catch (error) {
+    aviso(
+      document.getElementById("aviso"),
+      error.message,
+      "error"
+    );
+  } finally {
+    cargando = false;
+    if (pendiente) {
+      pendiente = false;
+      cargar();
+    }
+  }
+}
+
+async function iniciar() {
+  try {
+    const resultado = await api("/sensores");
+
+    for (const sensor of resultado.sensores) {
+      const opcion = el(
+        "option", null, sensor.nombre + " (" + sensor.id + ")"
+      );
+      opcion.value = sensor.id;
+      selector.append(opcion);
+    }
+
+    const id = parametros.get("id");
+    if (resultado.sensores.some(sensor => sensor.id === id)) {
+      selector.value = id;
+    }
+
+    await cargar();
+  } catch (error) {
+    aviso(
+      document.getElementById("aviso"),
+      error.message,
+      "error"
+    );
+  }
+}
+
+document.getElementById("filtro").addEventListener("change", cargar);
+document.getElementById("filtro").addEventListener(
+  "submit", evento => evento.preventDefault()
+);
+
+setInterval(() => {
+  if (dia.value === hoyLocal()) cargar();
+}, 5000);
+
+iniciar();
+</script>
+</body>
+</html>

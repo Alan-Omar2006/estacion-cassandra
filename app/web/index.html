@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tablero · Estación UTHH</title>
+  <link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main>
+  <h1>Estación meteorológica UTHH</h1>
+  <p class="nota">
+    Sensores simulados. El tablero se actualiza cada 2 segundos.
+  </p>
+
+  <div id="aviso"></div>
+  <section class="rejilla" id="sensores"></section>
+
+  <div class="rejilla">
+    <section class="tarjeta">
+      <h2>Alertas de hoy</h2>
+      <div class="tabla">
+        <table>
+          <thead>
+            <tr>
+              <th>Hora</th>
+              <th>Sensor</th>
+              <th>Temperatura</th>
+            </tr>
+          </thead>
+          <tbody id="alertas"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="tarjeta">
+      <h2>Registra una lectura desde tu celular</h2>
+      <div id="qr"></div>
+      <p>
+        <a href="registrar.html">Abrir formulario de registro</a>
+      </p>
+      <p class="nota">
+        Para acceder desde el celular, el puerto 3000 debe estar
+        en Public. Mantén privado el puerto 9042.
+      </p>
+      <p class="nota" id="aviso-qr"></p>
+    </section>
+  </div>
+
+  <section class="tarjeta">
+    <h2>Consultas a Cassandra</h2>
+    <div id="cql"></div>
+  </section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script src="app.js"></script>
+
+<script>
+menu("index.html");
+
+let cargando = false;
+
+async function cargar() {
+  if (cargando) return;
+  cargando = true;
+
+  try {
+    const resultado = await api("/sensores");
+    const alertas = await api("/alertas?dia=" + resultado.hoy);
+
+    // Tarjetas de los sensores.
+    const contenedor = document.getElementById("sensores");
+    contenedor.textContent = "";
+
+    if (!resultado.sensores.length) {
+      aviso(contenedor, "No hay sensores registrados.");
+    }
+
+    for (const sensor of resultado.sensores) {
+      const lectura = sensor.ultima;
+      const alta = lectura &&
+        lectura.temperatura > sensor.temp_max;
+
+      const tarjeta = el(
+        "a", "tarjeta sensor" + (alta ? " alerta" : "")
+      );
+
+      tarjeta.href =
+        "sensor.html?id=" + encodeURIComponent(sensor.id);
+
+      tarjeta.append(
+        el("h3", null, sensor.nombre),
+        el("p", "nota", sensor.ubicacion + " · " + sensor.id),
+        el(
+          "div", "temp",
+          lectura ? num(lectura.temperatura) + " °C" : "—"
+        ),
+        el(
+          "p", null,
+          "Humedad: " +
+          (lectura ? lectura.humedad + " %" : "—") +
+          " · Umbral: " + sensor.temp_max + " °C"
+        ),
+        el(
+          "p", "nota",
+          lectura ? "Última lectura " + hace(lectura.hora)
+                  : "Sin lecturas"
+        ),
+        el("p", "nota", sensor.lecturasHoy + " lecturas hoy")
+      );
+
+      if (alta) {
+        tarjeta.append(el("span", "chip alerta", "Sobre el umbral"));
+      }
+
+      contenedor.append(tarjeta);
+    }
+
+    // Diez alertas mas recientes.
+    const tabla = document.getElementById("alertas");
+    tabla.textContent = "";
+
+    for (const alerta of alertas.alertas.slice(0, 10)) {
+      const fila = el("tr");
+      fila.append(
+        el("td", null, horaLocal(alerta.hora)),
+        el("td", null, alerta.sensor),
+        el("td", null, num(alerta.temperatura) + " °C")
+      );
+      tabla.append(fila);
+    }
+
+    if (!alertas.alertas.length) {
+      const fila = el("tr");
+      const celda = el("td", "nota", "Sin alertas hoy");
+      celda.colSpan = 3;
+      fila.append(celda);
+      tabla.append(fila);
+    }
+
+    verCql(
+      document.getElementById("cql"),
+      resultado.cql.concat(alertas.cql)
+    );
+
+    aviso(document.getElementById("aviso"), "");
+  } catch (error) {
+    aviso(
+      document.getElementById("aviso"),
+      error.message,
+      "error"
+    );
+  } finally {
+    cargando = false;
+  }
+}
+
+// QR del formulario en esta misma direccion del servidor.
+try {
+  const qr = qrcode(0, "M");
+  qr.addData(location.origin + "/registrar.html");
+  qr.make();
+  document.getElementById("qr").innerHTML = qr.createSvgTag(5, 2);
+} catch {
+  document.getElementById("aviso-qr").textContent =
+    "No se pudo cargar el QR. Puedes usar el enlace al formulario.";
+}
+
+cargar();
+setInterval(cargar, 2000);
+</script>
+</body>
+</html>
